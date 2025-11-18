@@ -2,6 +2,7 @@
 # quit script if any of the commands fails. Note that && commands should be in parentheses for this to work.
 set -eo pipefail
 trap 'exit_status="$?" && echo Failed on line: $LINENO at command: $BASH_COMMAND && echo "exit status $exit_status"' ERR
+today=$(date "+%F")
 {
 if [ $# -ne 1 ]
 then
@@ -9,7 +10,7 @@ then
     exit 1
 fi
 search_here="$1"
-cd "$search_here" || exit 1
+#cd "$search_here" || exit 1
 date
 today=$(date "+%F")
 pwd
@@ -25,8 +26,9 @@ if [ "$search_here" = "/" ] ; then
 fi
 echo "spring compression script for paired illumina data"
 mkdir -p "spring_temp"
-ls -1 *"fastq.gz" > "spring_temp/all_fastq_gz.txt"
-md5sum *"fastq.gz" > "${spring_temp}/md5sums_spring_wrapper_${today}.txt"
+mkdir -p "${search_here}/spring_wrapper_results_logs_${today}"
+ls -1 "${search_here}/"*"fastq.gz" > "spring_temp/all_fastq_gz.txt"
+#md5sum "${search_here}/"*"fastq.gz"  > "spring_temp/md5sums_spring_wrapper_${today}.txt"
 
 ###########
 # generate a tab file
@@ -40,7 +42,7 @@ while IFS= read -r line; do
   # Entry name (everything in the filename before "_")
   sample_n=$(echo "$read1_n" | sed -r 's/_\w+_\w+_R[0-9]+_\w+\.fastq\.gz//')
   # Investigate if there are more than 2 hits
-  matches=$(ls -1 "${search_here}/${sample_n}"* 2>/dev/null)
+  matches=$(ls -1 "${search_here}/${sample_n}"*"fastq.gz" )
   count=$(echo "$matches" | wc -l)
   # If there are more than two hits, then skip the samplename
   if [[ "$count" -ne 2 ]] ; then
@@ -52,9 +54,14 @@ while IFS= read -r line; do
   read2_n=$(echo "$read1_n" | sed 's/_R1_/_R2_/g')
   # Full path to reverse read
   read2_n_path="${search_here}/${read2_n}"
-  spring_n=$(echo "$read1_n"  | sed 's/_R1_/_R1_R2_/g')
+  spring_n=$(echo "$read1_n"  | sed 's/_R1_/_R1_R2_/g' | sed 's/.fastq.gz/.spring/')
+  # extract the realpaths
+  read1_n_real_path=$(realpath "${read1_n_path}")
+  read2_n_real_path=$(realpath "${read2_n_path}")
+  reads_dir=$(realpath $(dirname "${read2_n_real_path}"))
+  
   # Create the input.tab file
-  echo -e "${sample_n},${read1_n_path},${read2_n_path},${spring_n}" >> "${spring_temp}/input.tab"
+  echo -e "${sample_n},${read1_n_real_path},${read2_n_real_path},${reads_dir}/${spring_n}" >> "spring_temp/input.tab"
   echo
 done < "spring_temp/forward_reads.txt"
 
@@ -68,14 +75,57 @@ echo "tab file saved here spring_temp/input.tab"
 echo "spring version"
 conda list | grep "spring"
 echo ""
-
+# spring_name is actually the real apath to the to-be spring-file in resultdir.
 while IFS="," read -r id fwd rev spring_name; do
-  echo "This a record in input.tab: $id $fwd $rev $spring_name"
-  spring -c -i "$fwd" "$rev" -t 6 -q lossless -g --output-file "$spring_name"
+    echo "This a record in input.tab: $id $fwd $rev $spring_name"
+    basename_fastq_gz_fwd=$(basename "$fwd")
+    basename_fastq_gz_rev=$(basename "$rev")
+    basename_spring_name=$(basename "$spring_name")
+    gunzip -c "$fwd" | md5sum  > "spring_temp/fwd_md5sum.txt"
+    gunzip -c "$rev" | md5sum  > "spring_temp/rev_md5sum.txt"
+
+    echo "spring -c -i "$fwd" "$rev" -t 6 -q lossless -g --output-file "spring_temp/${basename_spring_name}""
+    spring -c -i "$fwd" "$rev" -t 6 -q lossless -g --output-file "spring_temp/${basename_spring_name}"
+    echo "spring -d -g -i "spring_temp/${basename_spring_name}" -o "spring_temp/${basename_fastq_gz_fwd}" "spring_temp/${basename_fastq_gz_rev}""
+    spring -d -g -i "spring_temp/${basename_spring_name}" -o "spring_temp/${basename_fastq_gz_fwd}" "spring_temp/${basename_fastq_gz_rev}"
+    gunzip -c "spring_temp/${basename_fastq_gz_fwd}" | md5sum  > "spring_temp/fwd2_md5sum.txt"
+    gunzip -c "spring_temp/${basename_fastq_gz_rev}" | md5sum  > "spring_temp/rev2_md5sum.txt"
+
+    # see if the md5sums are the same (of it has succeded)
+    # Compare fwd
+    if diff <(awk '{print $1}' spring_temp/fwd_md5sum.txt) <(awk '{print $1}' spring_temp/fwd2_md5sum.txt); then
+        echo "Forward reads match"
+       log1=$( echo "$basename_fastq_gz_fwd" | sed 's/.gz//')
+       log2=$(cat "spring_temp/fwd_md5sum.txt")
+    else
+        echo "Forward reads do NOT match in md5sum!Skipping this fileset"
+        continue
+    fi
+
+    # Compare rev
+    if diff <(awk '{print $1}' spring_temp/rev_md5sum.txt) <(awk '{print $1}' spring_temp/rev2_md5sum.txt); then
+        echo "Reverse reads match"
+        log3=$( echo "$basename_fastq_gz_rev" | sed 's/.gz//')
+        log4=$(cat "spring_temp/rev_md5sum.txt")
+    else
+        echo "rev reads do NOT match in md5sum! Skipping this fileset"
+        continue
+    fi
+    echo "${log1},${log2}" >> "spring_temp/original_fastq_md5sums.txt"
+    echo "${log3},${log4}" >> "spring_temp/original_fastq_md5sums.txt"
+    # copy important files
+    rsync "spring_temp/${basename_spring_name}" "$spring_name"
+    echo "deleting ${fwd} and ${rev}"
+    if [ -f "$fwd" ] && [ -f "$rev" ] ; then
+        rm "$fwd"  "$rev"
+    fi
+
 done < "spring_temp/input.tab"
+# copy more things to the results dir
+rsync "spring_temp/original_fastq_md5sums.txt" "${search_here}/spring_wrapper_results_logs_${today}/"
+rsync "spring_temp/input.tab" "${search_here}/spring_wrapper_results_logs_${today}/"
+echo "Script finished $(date)"
 
-cp "${spring_temp}/md5sums_spring_wrapper_${today}.txt"  "${search_here}/md5sums_spring_wrapper_${today}.txt"
-
-} 2>&1 | tee "spring_wrapper_log${today}.log"
+} 2>&1 | tee "spring_wrapper_log_${today}.log"
 
 

@@ -3,10 +3,10 @@
 set -eo pipefail
 trap 'exit_status="$?" && echo Failed on line: $LINENO at command: $BASH_COMMAND && echo "exit status $exit_status"' ERR
 today=$(date "+%F")
-{
+
 if [ $# -ne 1 ]
 then
-    echo "Usage: bash $0 <path with paired fastq.gz>"
+    echo "Usage: nohup bash $0 <path with paired fastq.gz>  &> spring_wrapper.out &"
     exit 1
 fi
 search_here="$1"
@@ -27,7 +27,15 @@ fi
 echo "spring compression script for paired illumina data"
 mkdir -p "spring_temp"
 mkdir -p "${search_here}/spring_wrapper_results_logs_${today}"
-ls -1 "${search_here}/"*"fastq.gz" > "spring_temp/all_fastq_gz.txt"
+for i in "${search_here}/"*".fastq.gz";
+do
+    if [ ! -f "$i" ];then
+        echo "Skipping $i because it is not a real file"
+        continue
+    else
+        echo "$i" >> "spring_temp/all_fastq_gz.txt"
+    fi
+done
 #md5sum "${search_here}/"*"fastq.gz"  > "spring_temp/md5sums_spring_wrapper_${today}.txt"
 
 ###########
@@ -77,6 +85,7 @@ conda list | grep "spring"
 echo ""
 # spring_name is actually the real apath to the to-be spring-file in resultdir.
 while IFS="," read -r id fwd rev spring_name; do
+    # In this while loop we check that the file is actually possible to extract and get the original md5sum as in the original fastq-file
     echo "This a record in input.tab: $id $fwd $rev $spring_name"
     basename_fastq_gz_fwd=$(basename "$fwd")
     basename_fastq_gz_rev=$(basename "$rev")
@@ -125,7 +134,9 @@ done < "spring_temp/input.tab"
 rsync "spring_temp/original_fastq_md5sums.txt" "${search_here}/spring_wrapper_results_logs_${today}/"
 rsync "spring_temp/input.tab" "${search_here}/spring_wrapper_results_logs_${today}/"
 echo "Script finished $(date)"
-
-} 2>&1 | tee "spring_wrapper_log_${today}.log"
+rm -r spring_temp
+if [ -f "spring_wrapper.out" ];then
+    rsync spring_wrapper.out "${search_here}/spring_wrapper_results_logs_${today}/"nohup_${today}.log
+fi
 
 

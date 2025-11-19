@@ -10,6 +10,7 @@ then
     exit 1
 fi
 search_here="$1"
+search_here_relpath=$(realpath "$search_here")
 #cd "$search_here" || exit 1
 date
 today=$(date "+%F")
@@ -24,9 +25,27 @@ if [ "$search_here" = "/" ] ; then
     echo "ERROR: Refusing to operate on root directory '/'. Please specify a subdirectory. This script has no power  in root"
     exit 1
 fi
+# Validate input directory does not contain spaces
+if [[ "$search_here_relpath" =~ [[:space:]] ]]; then
+    echo "Error: The specified directory real path contains spaces $search_here_relpath. Please provide a path without spaces."
+    exit 1
+fi
 echo "spring compression script for paired illumina data"
 mkdir -p "spring_temp"
 mkdir -p "${search_here}/spring_wrapper_results_logs_${today}"
+
+# check if spring is in path
+if type spring &>/dev/null;then 
+    echo "spring is in path and that is good"
+else
+    echo "spring env spring is not activated. Could not run spring"
+    exit 1 
+fi
+
+# check size of fastq.gz and spring
+du_fastq_gz_before=$(du -h -d 1 -c "${search_here}/"*".fastq.gz"  | tail -n 1) || :
+du_spring_before=$(du -h -d 1 -c "${search_here}/"*".spring"  | tail -n 1) || :
+
 for i in "${search_here}/"*".fastq.gz";
 do
     if [ ! -f "$i" ];then
@@ -36,14 +55,20 @@ do
         echo "$i" >> "spring_temp/all_fastq_gz.txt"
     fi
 done
-
-# check size of fastq.gz and spring
-du_fastq_gz_before=$(du -h -d 1 -c "${search_here}/"*".fastq.gz"  | tail -n 1) || :
-du_spring_before=$(du -h -d 1 -c "${search_here}/"*".spring"  | tail -n 1) || :
+# remove file names from  spring_temp/all_fastq_gz.txt which are not following R1_ R2_ patter
+sed -i '/_R1\|_R2/!d' "spring_temp/all_fastq_gz.txt"
 ###########
 # generate a tab file
 # Make an input.tab file
 cat "spring_temp/all_fastq_gz.txt" | sed '/_R2_/d' > "spring_temp/forward_reads.txt"
+matches_fastq_gz=$(wc -l "spring_temp/forward_reads.txt")
+count_1=$(echo "$matches_fastq_gz" | wc -l)
+# If there are more than two hits, then skip the samplename
+if [[ "$count_1" -lt 1 ]] ; then
+    echo "There were 1 or less fastq.gz files in the search path. Please provide a path with more paired fastq.gz files. exiting script."
+    exit 1
+fi
+
 while IFS= read -r line; do
   # Get the filename of the forward read (R1)
   read1_n=$(basename "$line")
@@ -66,12 +91,15 @@ while IFS= read -r line; do
   read2_n=$(echo "$read1_n" | sed 's/_R1_/_R2_/g')
   # Full path to reverse read
   read2_n_path="${search_here}/${read2_n}"
+  if [ ! -f "$read2_n_path" ];then
+        echo "Skipping $i because $read2_n_path does not exist or is not a file"
+        continue
+  fi
   spring_n=$(echo "$read1_n"  | sed 's/_R1_/_R1_R2_/g' | sed 's/.fastq.gz/.spring/')
   # extract the realpaths
   read1_n_real_path=$(realpath "${read1_n_path}")
   read2_n_real_path=$(realpath "${read2_n_path}")
   reads_dir=$(realpath $(dirname "${read2_n_real_path}"))
-  
   # Create the input.tab file
   echo -e "${sample_n},${read1_n_real_path},${read2_n_real_path},${reads_dir}/${spring_n}" >> "spring_temp/input.tab"
   echo
@@ -85,7 +113,7 @@ echo "tab file saved here spring_temp/input.tab"
 ############
 # Run spring
 echo "spring version"
-conda list | grep "spring"
+conda list | grep "spring" || echo "Could not get the spring version, the version will only been seen if the spring installation is in a conda env"
 echo ""
 # spring_name is actually the real apath to the to-be spring-file in resultdir.
 while IFS="," read -r id fwd rev spring_name; do
@@ -128,8 +156,8 @@ while IFS="," read -r id fwd rev spring_name; do
     echo "${log3},${log4}" >> "spring_temp/original_fastq_md5sums.txt"
     # copy important files
     rsync "spring_temp/${basename_spring_name}" "$spring_name"
-    echo "deleting ${fwd} and ${rev}"
-    if [ -f "$fwd" ] && [ -f "$rev" ] ; then
+    if [ -f "$fwd" ] && [ -f "$rev" ] && [ -f "$spring_name" ]  && [ -s "$spring_name" ] ; then
+        echo "deleting ${fwd} and ${rev} because $spring_name has been created."
         rm "$fwd"  "$rev"
     fi
 
@@ -156,7 +184,7 @@ echo "--------------------------"
 echo "Script finished $(date)"
 
 if [ -f "spring_wrapper.out" ];then
-    rsync spring_wrapper.out "${search_here}/spring_wrapper_results_logs_${today}/"nohup_${today}.log
+    rsync --remove-source-files spring_wrapper.out "${search_here}/spring_wrapper_results_logs_${today}/"nohup_${today}.log
 fi
 
 

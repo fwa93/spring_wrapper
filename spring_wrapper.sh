@@ -36,11 +36,13 @@ do
         echo "$i" >> "spring_temp/all_fastq_gz.txt"
     fi
 done
-#md5sum "${search_here}/"*"fastq.gz"  > "spring_temp/md5sums_spring_wrapper_${today}.txt"
 
+# check size of fastq.gz and spring
+du_fastq_gz_before=$(du -h -d 1 -c "${search_here}/"*".fastq.gz"  | tail -n 1) || :
+du_spring_before=$(du -h -d 1 -c "${search_here}/"*".spring"  | tail -n 1) || :
 ###########
 # generate a tab file
-# Make an input.tab file for Nullarbor
+# Make an input.tab file
 cat "spring_temp/all_fastq_gz.txt" | sed '/_R2_/d' > "spring_temp/forward_reads.txt"
 while IFS= read -r line; do
   # Get the filename of the forward read (R1)
@@ -48,9 +50,11 @@ while IFS= read -r line; do
   # Full path to forward read
   read1_n_path="${search_here}/${read1_n}"
   # Entry name (everything in the filename before "_")
-  sample_n=$(echo "$read1_n" | sed -r 's/_\w+_\w+_R[0-9]+_\w+\.fastq\.gz//')
+  # ALL FILES MUST HAVE _R1_ and _R2_ even though it is not in the pattern here
+  #sample_n=$(echo "$read1_n" | sed -r 's/_\w+_\w+_R[0-9]+_\w+\.fastq\.gz//')
+  sample_n=$(echo "$read1_n" | sed -r 's/_\w+\.fastq\.gz//')
   # Investigate if there are more than 2 hits
-  matches=$(ls -1 "${search_here}/${sample_n}"*"fastq.gz" )
+  matches=$(find "${search_here}" -maxdepth 1 -type f -name "${sample_n}*fastq.gz")
   count=$(echo "$matches" | wc -l)
   # If there are more than two hits, then skip the samplename
   if [[ "$count" -ne 2 ]] ; then
@@ -133,8 +137,24 @@ done < "spring_temp/input.tab"
 # copy more things to the results dir
 rsync "spring_temp/original_fastq_md5sums.txt" "${search_here}/spring_wrapper_results_logs_${today}/"
 rsync "spring_temp/input.tab" "${search_here}/spring_wrapper_results_logs_${today}/"
-echo "Script finished $(date)"
 rm -r spring_temp
+
+# disc usage
+du_fastq_gz_after=$(du -h -d 1 -c "${search_here}/"*".fastq.gz" | tail -n 1) || :
+du_spring_after=$(du -h -d 1 -c "${search_here}/"*".spring"  | tail -n 1) || :
+
+echo "--------------------------"
+echo "Disc usage of .fastq.gz before and after"
+echo "fastq.gz before: $du_fastq_gz_before"
+echo "fastq.gz after $du_fastq_gz_after"
+echo "--------------------"
+echo "Disc usage of .spring before and after"
+echo "spring before: $du_spring_before"
+echo "spring after: $du_spring_after"
+echo "--------------------------"
+
+echo "Script finished $(date)"
+
 if [ -f "spring_wrapper.out" ];then
     rsync spring_wrapper.out "${search_here}/spring_wrapper_results_logs_${today}/"nohup_${today}.log
 fi

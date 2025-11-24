@@ -38,7 +38,14 @@ mkdir -p "${search_here}/spring_wrapper_results_logs_${today}"
 if type spring &>/dev/null;then 
     echo "spring is in path and that is good"
 else
-    echo "spring env spring is not activated. Could not run spring"
+    echo "spring env spring is not activated. Can not run spring"
+    exit 1 
+fi
+# check if pigz is in path
+if type pigz &>/dev/null;then 
+    echo "pigz is in path and that is good"
+else
+    echo "pigz is not found. Can not run pigz"
     exit 1 
 fi
 
@@ -81,7 +88,7 @@ while IFS= read -r line; do
   # Investigate if there are more than 2 hits
   matches=$(find "${search_here}" -maxdepth 1 -type f -name "${sample_n}*fastq.gz")
   count=$(echo "$matches" | wc -l)
-  # If there are more than two hits, then skip the samplename
+  # If there are not two hits, then skip the samplename
   if [[ "$count" -ne 2 ]] ; then
       echo "⚠️  $sample_n does not have 2 sequence files (it had $count files). Skipping.."
       echo "$sample_n" >> "spring_temp/failed_sequences.txt"
@@ -122,15 +129,15 @@ while IFS="," read -r id fwd rev spring_name; do
     basename_fastq_gz_fwd=$(basename "$fwd")
     basename_fastq_gz_rev=$(basename "$rev")
     basename_spring_name=$(basename "$spring_name")
-    gunzip -c "$fwd" | md5sum  > "spring_temp/fwd_md5sum.txt"
-    gunzip -c "$rev" | md5sum  > "spring_temp/rev_md5sum.txt"
+    pigz -c -d "$fwd" | md5sum  > "spring_temp/fwd_md5sum.txt"
+    pigz -c -d "$rev" | md5sum  > "spring_temp/rev_md5sum.txt"
 
     echo "spring -c -i "$fwd" "$rev" -t 6 -q lossless -g --output-file "spring_temp/${basename_spring_name}""
     spring -c -i "$fwd" "$rev" -t 6 -q lossless -g --output-file "spring_temp/${basename_spring_name}"
-    echo "spring -d -g -i "spring_temp/${basename_spring_name}" -o "spring_temp/${basename_fastq_gz_fwd}" "spring_temp/${basename_fastq_gz_rev}""
-    spring -d -g -i "spring_temp/${basename_spring_name}" -o "spring_temp/${basename_fastq_gz_fwd}" "spring_temp/${basename_fastq_gz_rev}"
-    gunzip -c "spring_temp/${basename_fastq_gz_fwd}" | md5sum  > "spring_temp/fwd2_md5sum.txt"
-    gunzip -c "spring_temp/${basename_fastq_gz_rev}" | md5sum  > "spring_temp/rev2_md5sum.txt"
+    echo "spring -d -g -t 4 -i "spring_temp/${basename_spring_name}" -o "spring_temp/${basename_fastq_gz_fwd}" "spring_temp/${basename_fastq_gz_rev}""
+    spring -d -g -t 4 -i  "spring_temp/${basename_spring_name}" -o "spring_temp/${basename_fastq_gz_fwd}" "spring_temp/${basename_fastq_gz_rev}"
+    pigz -c -d "spring_temp/${basename_fastq_gz_fwd}" | md5sum  > "spring_temp/fwd2_md5sum.txt"
+    pigz -c -d "spring_temp/${basename_fastq_gz_rev}" | md5sum  > "spring_temp/rev2_md5sum.txt"
 
     # see if the md5sums are the same (of it has succeded)
     # Compare fwd

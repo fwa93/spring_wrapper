@@ -62,7 +62,7 @@ do
         echo "$i" >> "spring_temp/all_fastq_gz.txt"
     fi
 done
-# remove file names from  spring_temp/all_fastq_gz.txt which are not following R1_ R2_ patter
+# remove file names from  spring_temp/all_fastq_gz.txt which are not following _R1_ _R2_ patter
 sed -i '/_R1_\|_R2_/!d' "spring_temp/all_fastq_gz.txt"
 ###########
 # generate a tab file

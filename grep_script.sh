@@ -4,10 +4,10 @@ file_grep="$2"
 ls -l "$search"
 
 scriptdir=$(dirname "$(realpath "$0")")
-my_grep=$(grep -c "$search" "$file_grep")
-my_ls=$(ls -1 "${search}/"*"fastq.gz" | wc -l) 
-my_find1=$(find "${search}/" -mtime +730 -iname '*fastq.gz' | wc -l)
-my_find2=$(find "${search}/" -mtime +730 -iname '*fastq.gz' | grep -E "_R1_|_R2_" | wc -l)
+my_grep=$(grep -c "${search}/[^/]*\.fastq\.gz" "$file_grep")
+my_ls=$(ls -1 "${search}/"*.fastq.gz | wc -l) 
+my_find1=$(find "${search}/" -mtime +730 -iname '*.fastq.gz' | wc -l)
+my_find2=$(find "${search}/" -mtime +730 -iname '*.fastq.gz' | grep -E "_R1_|_R2_" | wc -l)
 
 echo "$my_grep"
 echo "$my_ls"

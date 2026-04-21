@@ -31,7 +31,9 @@ if [[ "$search_here_relpath" =~ [[:space:]] ]]; then
     exit 1
 fi
 echo "spring compression script for paired illumina data"
-mkdir -p "spring_temp"
+my_temp=$(mktemp -d )
+echo "temp dir $(realpath "$my_temp")"
+ls $my_temp
 mkdir -p "${search_here}/spring_wrapper_results_logs_${today}"
 
 # check if spring is in path
@@ -59,16 +61,16 @@ do
         echo "Skipping $i because it is not a real file"
         continue
     else
-        echo "$i" >> "spring_temp/all_fastq_gz.txt"
+        echo "$i" >> "$my_temp/all_fastq_gz.txt"
     fi
 done
-# remove file names from  spring_temp/all_fastq_gz.txt which are not following _R1_ _R2_ patter
-sed -i '/_R1_\|_R2_/!d' "spring_temp/all_fastq_gz.txt"
+# remove file names from  $my_temp/all_fastq_gz.txt which are not following _R1_ _R2_ patter
+sed -i '/_R1_\|_R2_/!d' "$my_temp/all_fastq_gz.txt"
 ###########
 # generate a tab file
 # Make an input.tab file
-cat "spring_temp/all_fastq_gz.txt" | sed '/_R2_/d' > "spring_temp/forward_reads.txt"
-matches_fastq_gz=$(wc -l "spring_temp/forward_reads.txt")
+cat "$my_temp/all_fastq_gz.txt" | sed '/_R2_/d' > "$my_temp/forward_reads.txt"
+matches_fastq_gz=$(wc -l "$my_temp/forward_reads.txt")
 count_1=$(echo "$matches_fastq_gz" | wc -l)
 # If there are more than two hits, then skip the samplename
 if [[ "$count_1" -lt 1 ]] ; then
@@ -91,7 +93,7 @@ while IFS= read -r line; do
   # If there are not two hits, then skip the samplename
   if [[ "$count" -ne 2 ]] ; then
       echo "⚠️  $sample_n does not have 2 sequence files (it had $count files). Skipping.."
-      echo "$sample_n" >> "spring_temp/failed_sequences.txt"
+      echo "$sample_n" >> "$my_temp/failed_sequences.txt"
       continue
   fi
   # Filename of reverse read (R2)
@@ -108,13 +110,13 @@ while IFS= read -r line; do
   read2_n_real_path=$(realpath "${read2_n_path}")
   reads_dir=$(realpath $(dirname "${read2_n_real_path}"))
   # Create the input.tab file
-  echo -e "${sample_n},${read1_n_real_path},${read2_n_real_path},${reads_dir}/${spring_n}" >> "spring_temp/input.tab"
+  echo -e "${sample_n},${read1_n_real_path},${read2_n_real_path},${reads_dir}/${spring_n}" >> "$my_temp/input.tab"
   echo
-done < "spring_temp/forward_reads.txt"
+done < "$my_temp/forward_reads.txt"
 
-cat "spring_temp/input.tab"
+cat "$my_temp/input.tab"
 echo
-echo "tab file saved here spring_temp/input.tab"
+echo "tab file saved here $my_temp/input.tab"
 
 
 ############
@@ -129,50 +131,50 @@ while IFS="," read -r id fwd rev spring_name; do
     basename_fastq_gz_fwd=$(basename "$fwd")
     basename_fastq_gz_rev=$(basename "$rev")
     basename_spring_name=$(basename "$spring_name")
-    pigz -c -d "$fwd" | md5sum  > "spring_temp/fwd_md5sum.txt"
-    pigz -c -d "$rev" | md5sum  > "spring_temp/rev_md5sum.txt"
+    pigz -c -d "$fwd" | md5sum  > "$my_temp/fwd_md5sum.txt"
+    pigz -c -d "$rev" | md5sum  > "$my_temp/rev_md5sum.txt"
 
-    echo "spring -c -i "$fwd" "$rev" -t 6 -q lossless -g --output-file "spring_temp/${basename_spring_name}""
-    spring -c -i "$fwd" "$rev" -t 6 -q lossless -g --output-file "spring_temp/${basename_spring_name}"
-    echo "spring -d -g -t 4 -i "spring_temp/${basename_spring_name}" -o "spring_temp/${basename_fastq_gz_fwd}" "spring_temp/${basename_fastq_gz_rev}""
-    spring -d -g -t 4 -i  "spring_temp/${basename_spring_name}" -o "spring_temp/${basename_fastq_gz_fwd}" "spring_temp/${basename_fastq_gz_rev}"
-    pigz -c -d "spring_temp/${basename_fastq_gz_fwd}" | md5sum  > "spring_temp/fwd2_md5sum.txt"
-    pigz -c -d "spring_temp/${basename_fastq_gz_rev}" | md5sum  > "spring_temp/rev2_md5sum.txt"
+    echo "spring -c -i "$fwd" "$rev" -t 6 -q lossless -g --output-file "$my_temp/${basename_spring_name}""
+    spring -c -i "$fwd" "$rev" -t 6 -q lossless -g --output-file "$my_temp/${basename_spring_name}"
+    echo "spring -d -g -t 4 -i "$my_temp/${basename_spring_name}" -o "$my_temp/${basename_fastq_gz_fwd}" "$my_temp/${basename_fastq_gz_rev}""
+    spring -d -g -t 4 -i  "$my_temp/${basename_spring_name}" -o "$my_temp/${basename_fastq_gz_fwd}" "$my_temp/${basename_fastq_gz_rev}"
+    pigz -c -d "$my_temp/${basename_fastq_gz_fwd}" | md5sum  > "$my_temp/fwd2_md5sum.txt"
+    pigz -c -d "$my_temp/${basename_fastq_gz_rev}" | md5sum  > "$my_temp/rev2_md5sum.txt"
 
     # see if the md5sums are the same (of it has succeded)
     # Compare fwd
-    if diff <(awk '{print $1}' spring_temp/fwd_md5sum.txt) <(awk '{print $1}' spring_temp/fwd2_md5sum.txt); then
+    if diff <(awk '{print $1}' $my_temp/fwd_md5sum.txt) <(awk '{print $1}' $my_temp/fwd2_md5sum.txt); then
         echo "Forward reads match"
        log1=$( echo "$basename_fastq_gz_fwd" | sed 's/.gz//')
-       log2=$(cat "spring_temp/fwd_md5sum.txt")
+       log2=$(cat "$my_temp/fwd_md5sum.txt")
     else
         echo "Forward reads do NOT match in md5sum!Skipping this fileset"
         continue
     fi
 
     # Compare rev
-    if diff <(awk '{print $1}' spring_temp/rev_md5sum.txt) <(awk '{print $1}' spring_temp/rev2_md5sum.txt); then
+    if diff <(awk '{print $1}' $my_temp/rev_md5sum.txt) <(awk '{print $1}' $my_temp/rev2_md5sum.txt); then
         echo "Reverse reads match"
         log3=$( echo "$basename_fastq_gz_rev" | sed 's/.gz//')
-        log4=$(cat "spring_temp/rev_md5sum.txt")
+        log4=$(cat "$my_temp/rev_md5sum.txt")
     else
         echo "rev reads do NOT match in md5sum! Skipping this fileset"
         continue
     fi
-    echo "${log1},${log2}" >> "spring_temp/original_fastq_md5sums.txt"
-    echo "${log3},${log4}" >> "spring_temp/original_fastq_md5sums.txt"
+    echo "${log1},${log2}" >> "$my_temp/original_fastq_md5sums.txt"
+    echo "${log3},${log4}" >> "$my_temp/original_fastq_md5sums.txt"
     # copy important files
-    rsync "spring_temp/${basename_spring_name}" "$spring_name"
+    rsync "$my_temp/${basename_spring_name}" "$spring_name"
     if [ -f "$fwd" ] && [ -f "$rev" ] && [ -f "$spring_name" ]  && [ -s "$spring_name" ] ; then
         echo "deleting ${fwd} and ${rev} because $spring_name has been created."
         rm "$fwd"  "$rev"
     fi
 
-done < "spring_temp/input.tab"
+done < "$my_temp/input.tab"
 # copy more things to the results dir
-rsync "spring_temp/original_fastq_md5sums.txt" "${search_here}/spring_wrapper_results_logs_${today}/"
-rsync "spring_temp/input.tab" "${search_here}/spring_wrapper_results_logs_${today}/"
-rm -r spring_temp
+rsync "$my_temp/original_fastq_md5sums.txt" "${search_here}/spring_wrapper_results_logs_${today}/"
+rsync "$my_temp/input.tab" "${search_here}/spring_wrapper_results_logs_${today}/"
+rm -r $my_temp
 
 # disc usage
 du_fastq_gz_after=$(du -h -d 1 -c "${search_here}/"*".fastq.gz" | tail -n 1) || :
